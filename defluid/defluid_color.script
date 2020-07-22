@@ -1,0 +1,14 @@
+go.property("fluid_color", vmath.vector4())
+
+local CHANGE_COLOR = hash("change_color")
+
+function init(self)
+	model.set_constant("#model", "color", self.fluid_color)
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == CHANGE_COLOR then
+		self.fluid_color = message.color or self.fluid_color
+		model.set_constant("#model", "color", self.fluid_color)
+	end
+end

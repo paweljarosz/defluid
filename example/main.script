@@ -1,0 +1,16 @@
+-- DEFLUID example
+-- This example shows how can you modify defluid game object by sending messages to its script.
+-- Created by Pawel Jarosz 2019 (MIT license - A short, permissive software license. You are free to do whatever you want as long as you include the original copyright and license notice in any copy of the software/source.)
+
+function init(self)
+	msg.post("/defluid", "activate")	-- activate creation of metaballs (fluid)
+	msg.post("/defluid", "change", { dry_each_after = 1 })	-- change param of defluid
+	timer.delay(6, false, function() 	-- after 6 s push up all metaballs
+		msg.post("/defluid", "force", { force = vmath.vector3(0,10000000,0) })
+	end)
+	msg.post("/defluid", "dry")			-- activate drying (dry a metaball every second)
+end
+
+function final(self)
+	msg.post("/defluid", "remove")		-- if needed you can destroy metaballs anytime
+end

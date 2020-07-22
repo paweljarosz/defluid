@@ -1,0 +1,152 @@
+local rendercam = require "rendercam.rendercam"
+local vp = rendercam.viewport
+
+local IDENTITY_MATRIX = vmath.matrix4()
+local CLEAR_COLOR = hash("clear_color")
+local WINDOW_RESIZED = hash("window_resized")
+local UPDATE_WINDOW = hash("update window")
+local CHANGE_METABALL_COLOR = hash("change_metaball_color")
+
+local function update_window(self)
+    rendercam.update_window(render.get_window_width(), render.get_window_height())
+    self.gui_proj = vmath.matrix4_orthographic(0, render.get_window_width(), 0, render.get_window_height(), -1, 1)
+    
+
+    -- update render target sizes to fit viewport
+    if self.base_target then -- make sure render targets have already been created (i.e. this is not the very first call)
+        render.set_render_target_size(self.base_target, vp.width, vp.height)
+        render.set_render_target_size(self.metaball_target, vp.width, vp.height)
+    end
+end
+
+local function create_render_targets(self)
+    local color_params = {
+        format = render.FORMAT_RGBA,
+        width = vp.width,
+        height = vp.height,
+        min_filter = render.FILTER_LINEAR,
+        mag_filter = render.FILTER_LINEAR,
+        u_wrap = render.WRAP_CLAMP_TO_EDGE,
+        v_wrap = render.WRAP_CLAMP_TO_EDGE
+    }
+    local depth_params = {
+        format = render.FORMAT_DEPTH,
+        width = vp.width,
+        height = vp.height,
+        u_wrap = render.WRAP_CLAMP_TO_EDGE,
+        v_wrap = render.WRAP_CLAMP_TO_EDGE
+    }
+
+    self.base_target = render.render_target("base_target", {[render.BUFFER_COLOR_BIT] = color_params, [render.BUFFER_DEPTH_BIT] = depth_params })
+    self.metaball_target = render.render_target("metaball_target", {[render.BUFFER_COLOR_BIT] = color_params, [render.BUFFER_DEPTH_BIT] = depth_params })
+end
+
+function init(self)
+    --print("Render","URL:",msg.url())
+    self.tile_pred = render.predicate({"tile"})
+    self.tile_foreground = render.predicate({"tile_foreground"})
+    self.gui_pred = render.predicate({"gui"})
+    self.text_pred = render.predicate({"text"})
+    self.model_pred = render.predicate({"model"})
+    self.particle_pred = render.predicate({"particle"})
+    self.particle_behind_pred= render.predicate({"particle_behind"})
+    self.metaball_pred = render.predicate({"metaball"})
+    self.render_target_pred = render.predicate({"render target"})
+
+    self.clear_color = vmath.vector4(0)
+
+    rendercam.configWin.x = render.get_width();  rendercam.configWin.y = render.get_height()
+    rendercam.update_window_size(render.get_window_width(), render.get_window_height())
+    update_window(self)
+
+    -- Create the render targets
+    -- 		do this after window update so rendercam calculates the viewport size first
+    create_render_targets(self)
+end
+
+function update(self)
+    -- Set view and projection with latest matrices calculated by the module
+    render.set_view(rendercam.calculate_view())
+    render.set_projection(rendercam.calculate_proj())
+
+    -- Set viewport (x and y will be zero unless using a fixed aspect ratio)
+    render.set_viewport(vp.x, vp.y, vp.width, vp.height)
+
+    render.set_depth_mask(true)
+    render.clear({[render.BUFFER_COLOR_BIT] = self.clear_color, [render.BUFFER_DEPTH_BIT] = 1, [render.BUFFER_STENCIL_BIT] = 0})
+
+    render.set_depth_mask(false)
+    render.disable_state(render.STATE_DEPTH_TEST)
+    render.disable_state(render.STATE_STENCIL_TEST)
+    render.enable_state(render.STATE_BLEND)
+    render.set_blend_func(render.BLEND_SRC_ALPHA, render.BLEND_ONE_MINUS_SRC_ALPHA)
+    render.disable_state(render.STATE_CULL_FACE)
+
+
+    -- BASE RENDER
+    --		Draw all normal stuff to base render target
+    render.enable_render_target(self.base_target)
+    render.clear({[render.BUFFER_COLOR_BIT] = self.clear_color, [render.BUFFER_DEPTH_BIT] = 1, [render.BUFFER_STENCIL_BIT] = 0})
+
+    render.draw(self.tile_pred)
+    render.draw(self.particle_behind_pred)
+    render.draw(self.tile_foreground)
+    render.draw(self.particle_pred)
+    
+    -- Debug rendering - physics debug, draw_line
+    render.disable_state(render.STATE_DEPTH_TEST)
+    render.disable_state(render.STATE_CULL_FACE)
+    render.draw_debug3d()
+    
+    render.set_blend_func(render.BLEND_SRC_ALPHA, render.BLEND_ONE_MINUS_SRC_ALPHA)
+    render.disable_render_target(self.base_target)
+
+    -- METABALL RENDER
+    --    Draw metaballs
+    render.enable_render_target(self.metaball_target)
+    render.clear({[render.BUFFER_COLOR_BIT] = self.clear_color, [render.BUFFER_DEPTH_BIT] = 1, [render.BUFFER_STENCIL_BIT] = 0})
+    render.draw(self.metaball_pred)
+    render.set_blend_func(render.BLEND_SRC_ALPHA, render.BLEND_ONE_MINUS_SRC_ALPHA)
+    render.disable_render_target(self.metaball_target)
+
+    -- RENDER TARGET RENDERING
+    --    Draw everything combined on the target quad
+    render.set_view(IDENTITY_MATRIX) -- set view and projection so quad fills the viewport
+    render.set_projection(IDENTITY_MATRIX)
+    render.enable_texture(0, self.metaball_target, render.BUFFER_COLOR_BIT)
+    render.enable_texture(1, self.base_target, render.BUFFER_COLOR_BIT)
+    render.draw(self.render_target_pred)
+    render.disable_texture(0, self.metaball_target)
+    render.disable_texture(1, self.base_target)
+
+    -- GUI Rendering
+    render.set_viewport(0, 0, rendercam.window.x, rendercam.window.y)
+    render.set_view(IDENTITY_MATRIX)
+    -- already reset view to an identity matrix
+    render.set_projection(self.gui_proj) -- gui_proj only calculated on update_window
+
+    render.disable_state(render.STATE_CULL_FACE)
+    render.disable_state(render.STATE_DEPTH_TEST)
+    render.enable_state(render.STATE_STENCIL_TEST)
+
+    render.draw(self.gui_pred)
+    render.draw(self.text_pred)
+    render.disable_state(render.STATE_STENCIL_TEST)
+
+    --render.set_depth_mask(false)
+    --render.draw_debug3d()
+end
+
+function on_message(self, message_id, message)
+    if message_id == CLEAR_COLOR then
+        self.clear_color = message.color
+    elseif message_id == WINDOW_RESIZED then -- sent by engine
+        update_window(self)
+    elseif message_id == UPDATE_WINDOW then -- sent by rendercam when a camera is activated ("window_resized" engine message requires data)
+        update_window(self)
+    elseif message_id == CHANGE_METABALL_COLOR then
+        local metaball_color = message.color or vmath.vector4(1)
+        --sprite.set_constant("#sprite", "tint", vmath.vector4(1, 0, 0, 1))
+        update_window(self)
+end
+end

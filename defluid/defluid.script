@@ -1,0 +1,111 @@
+-------------
+-- DEFLUID --
+-------------
+
+-- Defluid is a premade game object that can be perceived as
+-- a factory of particles with a special material on theirs sprites
+-- that are rendered together with anything else (sprites, tiles)
+-- on the render target defluid_plane (include it in your collection)
+-- It utilizes the rendercam, so include a camera in your collection too.
+
+-- Created by Pawel Jarosz 2019 (MIT license - A short, permissive software license.
+-- You are free to do whatever you want as long as you include the original copyright
+-- and license notice in any copy of the software/source.)
+
+
+go.property("num_of_metaballs", 100)
+go.property("scale_of_metaball", 1)
+go.property("emitter_width", 50)
+go.property("emitter_height", 50)
+go.property("dry_each_after", 0)
+go.property("create_at_init", true)
+go.property("debug_physics", false)
+
+local ACTIVATE = hash("activate")
+local DRY = hash("dry")
+local CHANGE = hash("change")
+local FORCE = hash("force")
+local REMOVE = hash("remove")
+
+local function dry_metaballs(self)
+	self.i = 1
+	if self.dry_each_after ~= 0 then 
+		self.tim = timer.delay(self.dry_each_after, true, function()
+			if self.i <= self.num_of_metaballs then
+				local metaball = table.remove(self.metaballs)
+				go.animate(msg.url(metaball.id), "scale", go.PLAYBACK_ONCE_FORWARD,
+				0, go.EASING_INOUTSINE, self.dry_each_after, 0, function()
+					go.delete(metaball) end)
+					self.i = self.i + 1
+			else
+				timer.cancel(self.tim)
+				self.tim = nil
+				self.i = nil
+			end
+		end)
+	end
+end
+
+local function create_metaballs(self)
+	self.metaballs = {}
+	math.randomseed (os.time())
+	self.scale_of_metaball = vmath.vector3(self.scale_of_metaball)
+
+	for i = 1,self.num_of_metaballs do
+		local pos = go.get_position()
+		pos.x = pos.x - (self.emitter_width/2) + math.random()*self.emitter_width
+		pos.y = pos.y - (self.emitter_height/2) + math.random()*self.emitter_height
+		ball = {}
+		ball.id = factory.create("#particles", pos, _, _, self.scale_of_metaball)
+		ball.url = msg.url(msg.url(ball.id).socket, msg.url(ball.id).path, "collisionobject")
+		table.insert(self.metaballs, ball)
+	end
+	dry_metaballs(self)
+end
+
+local function set_force(self, force)
+	for _,metaball in ipairs(self.metaballs) do
+		msg.post(metaball.url, "apply_force", {force = force,
+			position = go.get_world_position(metaball.id)})
+	end
+end
+
+
+function init(self)
+	if self.debug_physics then
+		msg.post("@system:", "toggle_physics_debug")
+	end
+	if self.create_at_init then
+		create_metaballs(self)
+	end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == ACTIVATE then
+		create_metaballs(self)
+
+	elseif message_id == CHANGE then
+		self.num_of_metaballs 	= message.num_of_metaballs 	or self.num_of_metaballs
+		self.emitter_width 		= message.emitter_width 	or self.emitter_width
+		self.emitter_height 	= message.emitter_height 	or self.emitter_height
+		self.dry_each_after 	= message.dry_each_after 	or self.dry_each_after
+
+	elseif message_id == FORCE then
+		set_force(self, message.force)
+
+	elseif message_id == DRY then
+		dry_metaballs(self)
+
+	elseif message_id == REMOVE then
+		go.delete()
+	end
+end
+
+function final(self)
+	if self.tim then timer.cancel(self.tim) end
+	if self.metaballs then
+		for _,metaball in ipairs(self.metaballs) do
+			go.delete(metaball)
+		end
+	end
+end
